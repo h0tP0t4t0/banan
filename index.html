@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>Find Track</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; }
+    body { font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; }
     input, button { padding: 8px; margin: 5px 0; width: 100%; }
     button { background: #4CAF50; color: white; border: none; cursor: pointer; }
     button:hover { background: #45a049; }
@@ -22,21 +22,64 @@
     <button type="submit">Find Track</button>
   </form>
 
+  <p id="status"></p>
+
   <script>
-    document.getElementById("trackForm").addEventListener("submit", function(event) {
+    document.getElementById("trackForm").addEventListener("submit", async function(event) {
       event.preventDefault();
 
       const address = document.getElementById("address").value;
       const range = document.getElementById("range").value;
+      const status = document.getElementById("status");
+      status.textContent = "Searching for tracks...";
 
-      // 👉 For now, hardcode a track destination (later replace with ML/OSM lookup)
-      const track = "Stockholm Stadion Athletics Track";
+      try {
+        // Step 1: Geocode address -> lat/lon
+        const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`);
+        const geoData = await geoRes.json();
+        if (geoData.length === 0) {
+          status.textContent = "Could not find that address.";
+          return;
+        }
+        const lat = geoData[0].lat;
+        const lon = geoData[0].lon;
 
-      // Build the Google Maps route URL
-      const mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(address)}&destination=${encodeURIComponent(track)}&travelmode=walking`;
+        // Step 2: Query Overpass API for tracks within radius (in meters)
+        const overpassQuery = `
+          [out:json];
+          (
+            node["leisure"="track"](around:${range * 1000},${lat},${lon});
+            way["leisure"="track"](around:${range * 1000},${lat},${lon});
+            relation["leisure"="track"](around:${range * 1000},${lat},${lon});
+          );
+          out center;
+        `;
+        const overpassRes = await fetch("https://overpass-api.de/api/interpreter", {
+          method: "POST",
+          body: overpassQuery
+        });
+        const overpassData = await overpassRes.json();
 
-      // Open route in new tab
-      window.open(mapsUrl, "_blank");
+        if (!overpassData.elements || overpassData.elements.length === 0) {
+          status.textContent = "No athletics tracks found within that range.";
+          return;
+        }
+
+        // Step 3: Pick the first track (could sort by distance later)
+        const track = overpassData.elements[0];
+        const trackLat = track.lat || track.center.lat;
+        const trackLon = track.lon || track.center.lon;
+
+        status.textContent = "Track found! Opening route in Google Maps...";
+
+        // Step 4: Open Google Maps route
+        const mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(address)}&destination=${trackLat},${trackLon}&travelmode=walking`;
+        window.open(mapsUrl, "_blank");
+
+      } catch (err) {
+        console.error(err);
+        status.textContent = "Error while searching. Please try again.";
+      }
     });
   </script>
 </body>
